@@ -1,0 +1,24 @@
+# Zakres danych (format rrrr-mm-dd)
+start_date: null # Null -> ostatnie 2 lata wstecz
+end_date: null # Null -> dziś
+
+# Pliki I/O
+valuation_excel_path: "input/portfolio2.xlsx" # Arkusz z Ticker / [Upside, Confidence] (opcjonalnie)
+trades_excel_path: "input/portfolio.xlsx" # Transakcje do rekonstrukcji holdings
+output_file: "output/portfolio_risk_report.xlsx"
+
+# Ryzyko portfela
+var_confidence: 0.99 # Poziom ufności dla VaR/ES
+var_horizon_days: 20 # Horyzont ryzyka (dni robocze); skala √h
+use_log_returns: true # True = log-zwroty, False = proste
+risk_window_days: 252 # Z jakiego okresu bierze dane do obliczeń VaR/ES
+trading_days: 252 # Liczba sesji w roku
+
+# Upside
+min_upside: 0.2
+min_tickers_after_filter: 8
+
+# Ograniczenia
+bl_box_lb: 0.05 # Min % w portfelu do spółki
+bl_box_ub: 0.20 # Max % w portfelu do spółki
+risk_free_rate: 0.055 # Stopa wolna od ryzyka

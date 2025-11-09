@@ -1,0 +1,9 @@
+pandas
+numpy
+scipy
+pypfopt
+yfinance
+PyYAML
+openpyxl
+xlsxwriter
+python-dateutil
