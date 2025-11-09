@@ -5,6 +5,14 @@ All notable changes to **fundusz-hossa-procapital** are documented here.
 ---
 
 ## [Unreleased]
+###Added - 09.11.2025 (@PawelSkrzypczak01)
+- Dodano `analytics/risk_metrics_by_company.py` — funkcje do tworzenia kart ryzyka:
+  - `calculate_volatility`, `calculate_downside_risk`, `calculate_sharpe_ratio`,
+    `calculate_sortino_ratio`, `calculate_max_drawdown`, `calculate_beta_vs_portfolio`,
+    `calculate_correlation_with_portfolio`, `create_risk_card`, `create_risk_cards_batch`.
+  - bezpieczne obsługi edge-case'ów (Series/DataFrame, brak danych, usunięto bare-except).
+- Dodano skrypt uruchomieniowy generujący karty ryzyka (plik main) — pobranie cen, risk parity, eksport `output/risk_cards.xlsx`.
+
 ### Planned / proposals
 - Additional sheets (e.g., Allocation, Monitoring) and risk-limit alerts.
 
