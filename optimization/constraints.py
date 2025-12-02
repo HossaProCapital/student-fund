@@ -2,24 +2,32 @@ import numpy as np
 
 def project_boxed_simplex(v, lb=0.05, ub=0.12, s=1.0, tol=1e-12, it=100):
     """
-    Projekcja wektora v na tzw. „ograniczony sympleks” (boxed simplex):
-        { w : sum(w) = s,  lb_i <= w_i <= ub_i }
+    Rzutuje wektor v na tzw. „ograniczony sympleks” (boxed simplex), czyli zbiór wektorów
+    wag o zadanej sumie s i z ograniczeniami dolnymi/górnymi:
 
-    Oznacza to, że szukamy takiego wektora w, który:
-        - leży możliwie blisko v (w sensie odjęcia jednej stałej od wszystkich elementów),
-        - ma sumę równą s,
-        - i każdy składnik w_i jest w przedziale [lb_i, ub_i].
+        { w : sum(w) = s oraz lb_i <= w_i <= ub_i dla każdego i }
 
-    Idea:
-    -----
-    Szukamy jednej liczby t (przesunięcia), takiej że po przycięciu wartości (v - t)
-    do przedziału [lb, ub], ich suma wynosi dokładnie s.
+    Z praktycznego punktu widzenia:
+        - na wejściu mamy „surowy” wektor v (np. wagi z modelu),
+        - na wyjściu dostajemy wektor w, który:
+            * ma sumę równą s (np. 1.0),
+            * spełnia ograniczenia lb_i <= w_i <= ub_i,
+            * jest możliwie podobny do v.
 
-    Formalnie: znajdź t takie, że sum( clip(v - t, lb, ub) ) = s.
-    To równanie rozwiązywane jest metodą bisekcji.
+    Jak działa algorytm:
+        1) Szukamy jednej liczby t (wspólnego przesunięcia),
+        2) Odejmujemy t od wszystkich elementów v,
+        3) Wynik przycinamy do przedziału [lb, ub] funkcją clip,
+        4) Dobieramy t tak, aby suma powstałego wektora była równa s.
+
+    Innymi słowy szukamy takiego t, że:
+        sum( clip(v - t, lb, ub) ) = s
+
+    Liczbę t znajdujemy numerycznie metodą bisekcji (zawężamy przedział,
+    w którym leży rozwiązanie, aż do uzyskania wymaganej dokładności).
     """
 
-    # Zamieniamy v na wektor 1D typu floa
+    # Zamieniamy v na wektor 1D typu float
     v  = np.ravel(v).astype(float)
 
     # Rozszerzamy lb i ub do tego samego kształtu co v (jeśli są skalarami)

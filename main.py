@@ -1,3 +1,16 @@
+"""
+Główny skrypt systemu analitycznego Funduszu Hossa Procapital.
+
+Zakres:
+- wczytanie konfiguracji z pliku config.yaml,
+- rekonstrukcja stanu portfela (holdings, gotówka) na podstawie arkusza transakcji,
+- wybór wszechświata spółek (tickery) i filtracja po „upside”,
+- pobranie danych cenowych z Yahoo Finance,
+- obliczenie empirycznych miar ryzyka portfela (VaR, ES, MDD, zmienność),
+- wyznaczenie wag portfela Risk Parity (RP) i Black–Litterman (BL, BL_Box),
+- wygenerowanie raportu w Excelu z podsumowaniem ryzyka i wagami portfeli.
+"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -17,14 +30,28 @@ from optimization.constraints import project_boxed_simplex
 from reporting.exporter import export_report_xlsx
 
 
-# FUNKCJE
+# FUNKCJE POMOCNICZE
 
 def read_config(path):
+    """
+    Czyta plik YAML z konfiguracją (config.yaml).
+
+    Zwraca:
+        słownik z parametrami konfiguracyjnymi.
+    Jeżeli plik jest pusty, zwraca pusty słownik.
+    """
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 def choose_tickers(cfg, trades_df):
-    """Wybiera tickery z arkusza wyceny lub transakcji."""
+    """
+    Wybiera tickery, z którymi będziemy pracować.
+
+    Logika:
+    1) Jeżeli dostępny jest arkusz wycen (valuation_excel_path) – bierzemy tickery stamtąd.
+       (To jest preferowane: pracujemy na spółkach, które mają własne „views” i wyceny.)
+    2) Jeżeli arkusza wycen nie ma lub nie da się go wczytać – bierzemy tickery z arkusza transakcji.
+    """
 
     val_path = cfg.get("valuation_excel_path")
     if val_path and Path(val_path).exists():
@@ -40,7 +67,10 @@ def choose_tickers(cfg, trades_df):
 
 
 def filter_tickers_by_upside(valuation_path: str, tickers: list[str], min_upside_raw: float) -> list[str]:
-    """Zwraca tickery, których 'Views' >= min_upside_raw (ułamek dziesiętny)."""
+    """
+    Filtruje wszechświat tickerów po 'Views' (upside) z arkusza wycen.
+    Zwraca tickery, których 'Views' >= min_upside_raw (ułamek dziesiętny).
+    """
 
     # Wybieramy tickery
     path = Path(valuation_path)
@@ -57,6 +87,7 @@ def filter_tickers_by_upside(valuation_path: str, tickers: list[str], min_upside
 # MAIN
 
 def main():
+    # Wczytanie config.yaml
     cfg_path = Path("config.yaml")
     if not cfg_path.is_file():
         print("[ERROR] Nie znaleziono pliku konfiguracyjnego config.yaml", file=sys.stderr)
@@ -65,12 +96,12 @@ def main():
     print(f"Używam konfiguracji: {cfg_path}")
     cfg = read_config(cfg_path)
 
-    # ŚCIEŻKI
+    # ŚCIEŻKI DO PLIKÓW WEJŚCIOWYCH
     valuation_path = cfg.get("valuation_excel_path", "input/portfolio2.xlsx")
     trades_path = cfg.get("trades_excel_path", "input/portfolio.xlsx")
     output_path = cfg.get("output_file", "output/portfolio_risk_report.xlsx")
 
-    # PARAMETRY
+    # PARAMETRY RYZYKA I MODELI CZYTANE Z CONFIG.YAML (+ WARTOŚCI DOMYŚLNE)
     var_conf = float(cfg.get("var_confidence", 0.99))
     var_h = int(cfg.get("var_horizon_days", 20))
     use_log = bool(cfg.get("use_log_returns", True))
@@ -90,7 +121,7 @@ def main():
     start_date = cfg.get("start_date") or (datetime.today().date() - timedelta(days=730))
     end_date = cfg.get("end_date") or datetime.today().date()
 
-    # TRANSAKCJE
+    # WCZYTYWANIE TRANSAKCJI I REKONSTRUKCJA PORTFELA
     try:
         trades_df, cash_balance = load_trades(trades_path)
     except Exception as e:
@@ -102,12 +133,13 @@ def main():
     else:
         holdings = pd.Series(dtype=float)
 
-    # TICKERY
+    # WYBIERAMY TICKERY
     tickers = choose_tickers(cfg, trades_df)
     if not tickers:
         print("[ERROR] Brak tickerów do pobrania cen.", file=sys.stderr)
         sys.exit(2)
 
+    # FILTROWANIE SPÓŁEK PO UPSIDE
     tickers_filtered = filter_tickers_by_upside(valuation_path, tickers, raw_min_upside)
 
     if not tickers_filtered:
@@ -119,7 +151,7 @@ def main():
         print(f"[ERROR] Za mało spółek po filtrze ({len(tickers)} < {min_tickers_after_filter}).", file=sys.stderr)
         sys.exit(2)
 
-    # CENY
+    # POBIERAMY CENY Z YAHOO FINANCE
     print(f"Pobieram ceny dla {len(tickers)} spółek od {start_date} do {end_date}.")
     prices = get_prices(tickers, start_date=start_date, end_date=end_date)
     if prices is None or prices.empty:
@@ -136,6 +168,11 @@ def main():
         holdings.name = "qty"
 
     # RYZYKO EMPIRYCZNE
+    # Obliczenie empirycznych miar ryzyka portfela (VaR, ES, MDD, zmienność, NAV)
+    # Funkcja compute_empirical_risk działa na:
+    # - cenach spółek,
+    # - aktualnym holdings,
+    # i zwraca słownik z kluczowymi miarami ryzyka i wagami bieżącego portfela.
     risk_emp = compute_empirical_risk(
         prices=prices,
         holdings=holdings,
@@ -146,19 +183,26 @@ def main():
         confidence=var_conf,
     )
 
-    # RISK PARITY
+    # WYZNACZAMY WAGI DO RISK PARITY
+    # liczymy dzienne logarytmiczne zwroty spółek
     rets_log = returns(prices, log=True)
+    # obliczamy macierz kowariancji
     Sigma = shrink_cov(rets_log)
+    # rozwiązujemy problem optymalizacyjny - każdy składnik ma mieć podobny udział w ryzyku
     w_rp = risk_parity_weights(Sigma, w_min=0.0, w_max=w_max)
 
-    # BLACK–LITTERMAN
+    # WYZNACZAMY WAGI DO BLACK–LITTERMAN
+    # liczymy roczną macierz kowariancji (dzienna * liczba sesji)
     Sigma_ann = Sigma * trading_days
+    # priory z RP, które przycinamy, żeby nie było wartości ujemnych
     w_mkt = np.maximum(w_rp, 0)
+    # normalizujemy aby suma wag była równa 1
     w_mkt = w_mkt / w_mkt.sum()
 
     bl_weights = None
     bl_weights_box = None
 
+    # wyznaczmy wagi
     if valuation_path and Path(valuation_path).exists():
         try:
             val = load_valuation_sheet(valuation_path)
@@ -168,32 +212,61 @@ def main():
                 idx_map = {t: i for i, t in enumerate(prices.columns)}
                 pick_idx = [idx_map[t] for t in val["Ticker"]]
                 k, n = len(pick_idx), len(prices.columns)
+                # macierz P - każdy wiersz to r-ty pogląd na spółkę j-tą
+                # gdy mamy poglądy tylko na jedną spółkę bez relacji między nimi
+                # to każdy wiersz ma jedynkę, reszta zera
                 P = np.zeros((k, n))
                 for r, j in enumerate(pick_idx):
                     P[r, j] = 1.0
 
-                Q = val["Views"].astype(float).to_numpy() - r_f # Odejmujemy stopę wolną od ryzyka
+                # wektor Q (views - upside) skorygowany od stopę wolną od ryzyka
+                Q = val["Views"].astype(float).to_numpy() - r_f
 
+                # confidence - jak bardzo ufamy danemu poglądowi
                 conf = val["Confidence"].astype(float).clip(1e-6, 1.0).to_numpy()
+                # bazowa wariancja dla każdego poglądu (wynikająca wyłącznie z:
+                # zmienności i korelacji spółek, niepewności priory i macierzy P
+                # „rynkowa” niepewność view
                 base = np.diag(P @ (bl_tau * Sigma_ann) @ P.T)
                 base = np.clip(base, 1e-12, None)
+                # wariancja poglądów po uwzględnieniu pewności
+                # „rynkowa niepewność × (nasza niepewność)”
                 Omega = np.diag(base / (conf ** 2)) * float(bl_omega_scale)
 
+                # wywołujemy funkcję BL
+                # zwraca wagi w_bl
                 bl_out = bl_minimal(
-                    Sigma=Sigma_ann, w_mkt=w_mkt, delta=bl_delta, tau=bl_tau,
-                    P=P, Q=Q, Omega=Omega, omega_scale=1.0
+                    Sigma=Sigma_ann,
+                    w_mkt=w_mkt,
+                    delta=bl_delta,
+                    tau=bl_tau,
+                    P=P,
+                    Q=Q,
+                    Omega=Omega,
+                    omega_scale=1.0
                 )
                 w_bl_raw = pd.Series(bl_out["w_bl"], index=prices.columns)
+
+                # wagi ujemne przycinamy do 0
+                # normalizujemy tak, aby suma wah była równa 1
                 bl_weights = w_bl_raw.clip(lower=0).fillna(0.0)
                 if bl_weights.sum() > 0:
                     bl_weights = bl_weights / bl_weights.sum()
 
+                # wersja bl_box: rzutujemy wagi w_bl na „ograniczony sympleks”
+                # suma wag = 1, a każda waga w przedziale [bl_box_lb, bl_box_ub].
                 w_box = project_boxed_simplex(v=w_bl_raw.to_numpy(), lb=bl_box_lb, ub=bl_box_ub, s=1.0)
                 bl_weights_box = pd.Series(w_box, index=prices.columns)
         except Exception as e:
+            # Jeżeli coś pójdzie nie tak (np. problemy z danymi), po prostu pomijamy BL
+            # i ograniczamy się do wag RP i bieżących wag portfela.
             print(f"[WARN] Pominięto Black–Litterman: {e}", file=sys.stderr)
 
     # EKSPORT
+    # Funkcja export_report_xlsx:
+    # - tworzy arkusz Summary z miarami ryzyka (NAV, zmienność, VaR, ES, MDD, gotówka),
+    # - tworzy arkusz Weights (Now, RP, BL, BL_Box),
+    # - zapisuje holdings, Prices_Tail i Config.
     export_report_xlsx(
         output_path=output_path,
         cfg_path=str(cfg_path),
