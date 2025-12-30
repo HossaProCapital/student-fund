@@ -7,3 +7,6 @@ PyYAML
 openpyxl
 xlsxwriter
 python-dateutil
+python-docx
+seaborn
+matplotlib

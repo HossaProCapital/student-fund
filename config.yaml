@@ -22,3 +22,7 @@ min_tickers_after_filter: 8
 bl_box_lb: 0.05 # Min % w portfelu do spółki
 bl_box_ub: 0.20 # Max % w portfelu do spółki
 risk_free_rate: 0.055 # Stopa wolna od ryzyka
+
+sector_constraints:
+  enabled: true
+  max_weight_per_sector: 0.25
